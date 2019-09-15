@@ -18,15 +18,10 @@ my $config = Config::Pit::get("twimage");
 my $consumer_key = $config->{consumer_key};
 my $consumer_secret = $config->{consumer_secret};
 
-my $nt = Net::Twitter::Lite::WithAPIv1_1->new(
-  consumer_key => $consumer_key,
-  consumer_secret => $consumer_secret,
-  ssl => 1
-);
-
 app->config(
   hypnotoad => {
     listen => ['http://*:'.$config->{port}],
+    workers => 2,
   },
 );
 
@@ -43,7 +38,7 @@ my $THIS_SITE = "https://retrorocket.biz/twimage";
 
 
 # Image base URL
-my $IMAGE_BASE = app->home .'/public/image';
+my $IMAGE_BASE = app->home .'/assets/images';
 my $IMAGE_DIR  = $IMAGE_BASE;
 # Create directory if not exists
 unless (-d $IMAGE_DIR) {
@@ -56,6 +51,12 @@ get '/auth' => sub {
   if($self->param("session")){
     $self->session( flag => $self->param("session") );
   }
+
+  my $nt = Net::Twitter::Lite::WithAPIv1_1->new(
+    consumer_key => $consumer_key,
+    consumer_secret => $consumer_secret,
+    ssl => 1
+  );
 
   my $cb_url = $self->url_for('auth_cb')->to_abs->scheme('https');
   my $url = $nt->get_authentication_url( callback => $cb_url );
@@ -71,6 +72,12 @@ get '/auth_cb' => sub {
   my $verifier = $self->param('oauth_verifier') || '';
   my $token = $self->session('token') || '';
   my $token_secret = $self->session('token_secret') || '';
+
+  my $nt = Net::Twitter::Lite::WithAPIv1_1->new(
+    consumer_key => $consumer_key,
+    consumer_secret => $consumer_secret,
+    ssl => 1
+  );
 
   $nt->request_token( $token );
   $nt->request_token_secret( $token_secret );
@@ -112,6 +119,12 @@ post '/upload' => sub {
   # セッションにaccess_tokenが残ってなければ再認証
   return $self->redirect_to( $THIS_SITE ) unless ($access_token && $access_token_secret);
 
+  my $nt = Net::Twitter::Lite::WithAPIv1_1->new(
+    consumer_key => $consumer_key,
+    consumer_secret => $consumer_secret,
+    ssl => 1
+  );
+
   $nt->access_token( $access_token );
   $nt->access_token_secret( $access_token_secret );
 
@@ -126,9 +139,14 @@ post '/upload' => sub {
       template => 'error',
       message  => "ファイルサイズが0byte以下です。"
     );
+  } elsif ($image->size >= 5 * 1024 * 1024) {
+    return $self->render(
+      template => 'error',
+      message  => "ファイルサイズが5MB以上です。"
+    );  
   }
-  # 拡張子つけてアップロードしてくれない人が多すぎるのでこちらでチェックせずTwitter側にチェックさせることにした。
 
+  # 拡張子つけてアップロードしてくれない人が多すぎるのでこちらでチェックせずTwitter側にチェックさせることにした。
   my $image_file = "$IMAGE_DIR/" . $screen_name;
 
   # If file is exists, unlink file
@@ -168,8 +186,12 @@ post '/upload' => sub {
   $self->stash('message' => $result_message);
 
   #ファイル削除
+  undef $image;
+  undef $nt;
   unlink $image_file;
-
+  
+  return 1;
+  
 } => 'upload';
 
 get '/upload' => sub {
@@ -185,5 +207,6 @@ get '/logout' => sub {
 } => 'logout';
 
 app->sessions->secure(1);
+app->sessions->cookie_name( $config->{session_name} );
 app->secrets([$config->{secure}]); # セッション管理のために付けておく
 app->start;
